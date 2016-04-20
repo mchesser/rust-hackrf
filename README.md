@@ -31,7 +31,7 @@ fn run() -> HackRFResult<()> {
 
     // Take 10 seconds worth of samples
     for _ in 0..10 * SAMP_RATE {
-        let (i, q) = rx_stream.next_sample_raw();
+        let (i, q) = rx_stream.next_sample();
         // .. Do something with samples ..
     }
 

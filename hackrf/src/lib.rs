@@ -27,7 +27,7 @@
 //!
 //!     // Take 10 seconds worth of samples
 //!     for _ in 0..10 * SAMP_RATE {
-//!         let (i, q) = rx_stream.next_sample_raw();
+//!         let (i, q) = rx_stream.next_sample();
 //!         // .. Do something with samples ..
 //!     }
 //!
@@ -219,16 +219,9 @@ impl HackRF {
 
         unsafe {
             match ffi::hackrf_start_rx(self.inner, rx_callback, shared_data as *mut c_void) {
-                HACKRF_SUCCESS => {
-                    Ok(RxStream {
-                        local_index: 0,
-                        local_buffer: StackVec::new(),
-                        shared_data: shared_data,
-                        hackrf_device: self,
-                    })
-                }
-
+                HACKRF_SUCCESS => Ok(RxStream::new(shared_data, self)),
                 error => {
+                    // Ensure the allocated data gets deallocated correctly.
                     mem::drop(Box::from_raw(shared_data));
                     Err(parse_error(error))
                 }
@@ -243,16 +236,42 @@ pub struct RxStream<'a> {
     local_buffer: StackVec,
     shared_data: *mut RxSharedData,
     hackrf_device: &'a mut HackRF,
+    lookup_table: [f32; 256],
 }
 
 impl<'a> RxStream<'a> {
-    /// Return the next raw I/Q sample from the HackRF
+    /// Create a new instance of a RxStream
+    fn new(shared_data: *mut RxSharedData, hackrf_device: &'a mut HackRF) -> RxStream<'a> {
+        fn gen_lookup_table() -> [f32; 256] {
+            let mut data = [0.0; 256];
+            for i in 0..256 {
+                data[i] = (i as i8) as f32 / 128.0;
+            }
+            data
+        }
+
+        RxStream {
+            local_index: 0,
+            local_buffer: StackVec::new(),
+            shared_data: shared_data,
+            hackrf_device: hackrf_device,
+            lookup_table: gen_lookup_table()
+        }
+    }
+
+    /// Return the next I/Q sample converted to a floating point number.
+    pub fn next_sample(&mut self) -> (f32, f32) {
+        let (raw_i, raw_q) = self.next_sample_raw();
+        (self.lookup_table[raw_i as usize], self.lookup_table[raw_q as usize])
+    }
+
+    /// Return the next raw I/Q sample from the HackRF.
     pub fn next_sample_raw(&mut self) -> (u8, u8) {
         if self.local_index + 1 < self.local_buffer.len() {
             let &RxSharedData(ref buffers, ref cvar) = unsafe { &(*self.shared_data) };
 
             // Obtain a lock to the shared data.
-            let buffers = {
+            let mut buffers = {
                 let lock = buffers.lock().unwrap();
                 if lock.used == 0 {
                     // If there is no data to read, then wait for data to arrive
@@ -305,7 +324,7 @@ impl StackVec {
     /// Copy a slice into the vector, setting the vectors length to the length of the slice.
     /// Panics if the slice is too large.
     fn copy_slice(&mut self, slice: &[u8]) {
-        self.data[0..slice.len()].copy_from_slice(slice);
+        self.data[0..slice.len()].clone_from_slice(slice);
         self.len = slice.len();
     }
 }
