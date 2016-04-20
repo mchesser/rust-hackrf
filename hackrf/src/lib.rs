@@ -354,14 +354,14 @@ impl<'a> RxStream<'a> {
         if self.local_index + 1 < self.local_buffer.len() {
             let &RxSharedData(ref buffers, ref cvar) = unsafe { &(*self.shared_data) };
 
-            // Obtain a lock to the shared data.
+            // Obtain a lock to the data buffers.
             let mut buffers = {
-                let lock = buffers.lock().unwrap();
-                if lock.used == 0 {
+                let mut lock = buffers.lock().unwrap();
+                while lock.used == 0 {
                     // If there is no data to read, then wait for data to arrive
-                    cvar.wait(lock).unwrap()
+                    lock = cvar.wait(lock).unwrap();
                 }
-                else { lock }
+                lock
             };
 
             // Get the oldest shared data and copy it into the local buffer.
@@ -421,7 +421,7 @@ impl ops::Deref for StackVec {
     }
 }
 
-/// Data for maintaining the currently stored samples
+/// Data buffers for maintaining the currently stored samples
 struct TransferBuffers {
     data: Vec<StackVec>,
     head: usize,
@@ -436,28 +436,29 @@ impl TransferBuffers {
             used: 0,
         }
     }
+
+    /// Copy the source buffer into the next free data buffer.
+    fn copy_to_next_buffer(&mut self, src_buffer: &[u8]) {
+        let dest_index = (self.head + self.used) %  self.data.len();
+        self.data[dest_index].copy_slice(src_buffer);
+
+        if self.used >= self.data.len() {
+            // Out of space in the buffer... Just overwrite old data for now...
+            self.head = (self.head + 1) % self.data.len();
+        }
+        else {
+            self.used += 1;
+        }
+    }
 }
 
-/// Copy the source buffer into the next free circular buffer.
-fn copy_to_next_buffer(src_buffer: &[u8], buffers: &mut TransferBuffers) {
-    let dest_index = (buffers.head + buffers.used) %  buffers.data.len();
-    buffers.data[dest_index].copy_slice(src_buffer);
-
-    if buffers.used >= buffers.data.len() {
-        // Out of space in the buffer... Just overwrite old data for now...
-        buffers.head = (buffers.head + 1) % buffers.data.len();
-    }
-    else {
-        buffers.used += 1;
-    }
-}
 
 unsafe extern "C" fn rx_callback(transfer: *mut ffi::hackrf_transfer) -> c_int {
     let src_buffer = slice::from_raw_parts((*transfer).buffer, (*transfer).valid_length as usize);
     let shared_data: *mut RxSharedData = mem::transmute((*transfer).rx_ctx);
 
     let &RxSharedData(ref buffers, ref cvar) = &(*shared_data);
-    copy_to_next_buffer(src_buffer, &mut *buffers.lock().unwrap());
+    buffers.lock().unwrap().copy_to_next_buffer(src_buffer);
     cvar.notify_one();
 
     0
