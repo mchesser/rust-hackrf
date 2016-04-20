@@ -17,12 +17,12 @@ const SAMP_RATE: u64 = 2_000_000; // 2 MHz
 fn main() {
    if let Err(e) = run() {
        println!("{:?}", e);
-   } 
+   }
 }
 
 fn run() -> HackRFResult<()> {
     try!(hackrf::init());
-    
+
     let mut device = try!(HackRF::open());
     try!(device.set_samp_rate(SAMP_RATE as f64));
     try!(device.set_freq(150_000_000));
@@ -31,7 +31,7 @@ fn run() -> HackRFResult<()> {
 
     // Take 10 seconds worth of samples
     for _ in 0..10 * SAMP_RATE {
-        let (i, q) = rx_stream.next_sample();
+        let (i, q) = rx_stream.next_sample_raw();
         // .. Do something with samples ..
     }
 

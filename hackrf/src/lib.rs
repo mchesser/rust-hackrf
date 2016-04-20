@@ -5,29 +5,29 @@
 //! ## Examples
 //! ```
 //! extern crate hackrf;
-//! 
+//!
 //! use hackrf::{HackRF, HackRFResult};
 //!
 //! const SAMP_RATE: u64 = 2_000_000; // 2 MHz
-//! 
+//!
 //! fn main() {
 //!    if let Err(e) = run() {
 //!        println!("{:?}", e);
-//!    } 
+//!    }
 //! }
-//! 
+//!
 //! fn run() -> HackRFResult<()> {
 //!     try!(hackrf::init());
-//!     
+//!
 //!     let mut device = try!(HackRF::open());
 //!     try!(device.set_samp_rate(SAMP_RATE as f64));
 //!     try!(device.set_freq(150_000_000));
-//! 
+//!
 //!     let mut rx_stream = try!(device.rx_stream());
-//! 
+//!
 //!     // Take 10 seconds worth of samples
 //!     for _ in 0..10 * SAMP_RATE {
-//!         let (i, q) = rx_stream.next_sample();
+//!         let (i, q) = rx_stream.next_sample_raw();
 //!         // .. Do something with samples ..
 //!     }
 //!
@@ -77,11 +77,18 @@ pub type HackRFResult<T> = Result<T, HackRFError>;
 fn parse_error(error_code: ffi::hackrf_error) -> HackRFError {
     unsafe {
         let desc = CStr::from_ptr(ffi::hackrf_error_name(error_code)).to_string_lossy();
-        HackRFError { 
+        HackRFError {
             desc: desc.to_string(),
             code: error_code as i32
         }
     }
+}
+
+/// Adjust a gain value to the nearest valid step
+fn adjust_gain(gain: u32, min: u32, max: u32, step: u32) -> u32 {
+    if gain < min { min }
+    else if gain > max { max }
+    else { (gain as f32 / step as f32).round() as u32 * step }
 }
 
 /// Initialize the HackRF library
@@ -98,7 +105,7 @@ pub fn exit() -> HackRFResult<()> {
     unsafe {
         hackrf_try!(ffi::hackrf_exit());
     }
-    Ok(())    
+    Ok(())
 }
 
 /// A HackRF device
@@ -123,15 +130,16 @@ impl HackRF {
             Ok(HackRF { inner: device })
         }
     }
-    
+
     /// Closes the current HackRF device
     pub fn close(self) -> HackRFResult<()> {
         unsafe {
             hackrf_try!(ffi::hackrf_close(self.inner));
+            mem::forget(self);
         }
         Ok(())
     }
-    
+
     /// Sets the center frequency (in Hz) of the HackRF: 5-6800 MHz
     pub fn set_freq(&mut self, freq: u64) -> HackRFResult<()> {
         // TODO: Consider checking that the frequency is in a valid range.
@@ -140,7 +148,7 @@ impl HackRF {
         }
         Ok(())
     }
-    
+
     /// Sets amp gain to on/off
     /// Warning: Enabling this in the presence of high power signals could damage the HackRF.
     pub fn set_amp_enable(&mut self, amp_enable: bool) -> HackRFResult<()> {
@@ -150,7 +158,7 @@ impl HackRF {
         }
         Ok(())
     }
-    
+
     /// Set antenna enable to on/off.
     pub fn set_antenna_enable(&mut self, antenna_enable: bool) -> HackRFResult<()> {
         unsafe {
@@ -159,16 +167,16 @@ impl HackRF {
         }
         Ok(())
     }
-    
+
     /// Set LNA gain: 0-40 dB, 8dB steps.
-    /// If the specified gain falls outside of the valid range, the gain will be clamped    
+    /// If the specified gain falls outside of the valid range, the gain will be clamped
     pub fn set_lna_gain(&mut self, gain: u32) -> HackRFResult<()> {
         unsafe {
             hackrf_try!(ffi::hackrf_set_lna_gain(self.inner, adjust_gain(gain, 0, 40, 8)));
         }
         Ok(())
     }
-    
+
     /// Set VGA (IF) gain: 0-62 dB, with 2dB steps.
     /// If the specified gain falls outside of the valid range, the gain will be clamped
     pub fn set_vga_gain(&mut self, gain: u32) -> HackRFResult<()> {
@@ -177,20 +185,20 @@ impl HackRF {
         }
         Ok(())
     }
-    
+
     /// Sets the sample rate in Hz: 2-20 MHz
     pub fn set_samp_rate(&mut self, samp_rate: f64) -> HackRFResult<()> {
         unsafe {
             hackrf_try!(ffi::hackrf_set_sample_rate(self.inner, samp_rate));
-            
+
             // Automatically compute a good baseband filter bandwidth
             let bandwidth = ffi::hackrf_compute_baseband_filter_bw_round_down_lt(samp_rate as u32);
             try!(self.set_baseband_filter_bw(bandwidth));
         }
         Ok(())
     }
-    
-    
+
+
     /// Sets the baseband filter bandwidth.
     /// Note: This must be performed *after* setting the sample rate.
     pub fn set_baseband_filter_bw(&mut self, filter_bw: u32) -> HackRFResult<()> {
@@ -200,15 +208,15 @@ impl HackRF {
         }
         Ok(())
     }
-    
-    /// Return a 
+
+    /// Start an RX stream
     pub fn rx_stream(&mut self) -> HackRFResult<RxStream> {
         let buffers = TransferBuffers::new(NUM_BUFFERS);
-        let shared_data = { 
+        let shared_data = {
             let data = Box::new(RxSharedData(Mutex::new(buffers), Condvar::new()));
             Box::into_raw(data)
         };
-        
+
         unsafe {
             match ffi::hackrf_start_rx(self.inner, rx_callback, shared_data as *mut c_void) {
                 HACKRF_SUCCESS => {
@@ -219,10 +227,10 @@ impl HackRF {
                         hackrf_device: self,
                     })
                 }
-                
+
                 error => {
                     mem::drop(Box::from_raw(shared_data));
-                    Err(parse_error(error))                    
+                    Err(parse_error(error))
                 }
             }
         }
@@ -238,31 +246,29 @@ pub struct RxStream<'a> {
 }
 
 impl<'a> RxStream<'a> {
-    pub fn next_sample(&mut self) -> (u8, u8) {
+    /// Return the next raw I/Q sample from the HackRF
+    pub fn next_sample_raw(&mut self) -> (u8, u8) {
         if self.local_index + 1 < self.local_buffer.len() {
             let &RxSharedData(ref buffers, ref cvar) = unsafe { &(*self.shared_data) };
-            
+
             // Obtain a lock to the shared data.
-            let buffers_lock = { 
+            let buffers = {
                 let lock = buffers.lock().unwrap();
-            
                 if lock.used == 0 {
                     // If there is no data to read, then wait for data to arrive
                     cvar.wait(lock).unwrap()
                 }
-                else {
-                    // There is data ready
-                    lock
-                }
+                else { lock }
             };
-            
+
             // Get the oldest shared data and copy it into the local buffer.
-            let index = buffers_lock.head;
-            self.local_buffer.copy_slice(&buffers_lock.data[index]);
-            
+            let index = buffers.head;
+            self.local_buffer.copy_slice(&buffers.data[index]);
+            buffers.used -= 1;
+
             self.local_index = 0;
         }
-        
+
         let i = self.local_index;
         self.local_index += 2;
         (self.local_buffer[i], self.local_buffer[i + 1])
@@ -279,9 +285,10 @@ impl<'a> Drop for RxStream<'a> {
     }
 }
 
-/// Data shared between the RxStream and callback context 
+/// Data shared between the RxStream and callback context
 struct RxSharedData(Mutex<TransferBuffers>, Condvar);
 
+/// A stack allocated vector with a maximum size
 struct StackVec {
     data: [u8; BUFFER_SIZE],
     len: usize,
@@ -294,7 +301,9 @@ impl StackVec {
             len: 0
         }
     }
-    
+
+    /// Copy a slice into the vector, setting the vectors length to the length of the slice.
+    /// Panics if the slice is too large.
     fn copy_slice(&mut self, slice: &[u8]) {
         self.data[0..slice.len()].copy_from_slice(slice);
         self.len = slice.len();
@@ -303,12 +312,13 @@ impl StackVec {
 
 impl ops::Deref for StackVec {
     type Target = [u8];
-    
+
     fn deref(&self) -> &[u8] {
         &self.data[0..self.len]
     }
 }
 
+/// Data for maintaining the currently stored samples
 struct TransferBuffers {
     data: Vec<StackVec>,
     head: usize,
@@ -329,7 +339,7 @@ impl TransferBuffers {
 fn copy_to_next_buffer(src_buffer: &[u8], buffers: &mut TransferBuffers) {
     let dest_index = (buffers.head + buffers.used) %  buffers.data.len();
     buffers.data[dest_index].copy_slice(src_buffer);
-    
+
     if buffers.used >= buffers.data.len() {
         // Out of space in the buffer... Just overwrite old data for now...
         buffers.head = (buffers.head + 1) % buffers.data.len();
@@ -339,20 +349,13 @@ fn copy_to_next_buffer(src_buffer: &[u8], buffers: &mut TransferBuffers) {
     }
 }
 
-/// Adjust a gain value to the nearest valid step
-fn adjust_gain(gain: u32, min: u32, max: u32, step: u32) -> u32 {
-    if gain < min { min }
-    else if gain > max { max }
-    else { (gain as f32 / step as f32).round() as u32 * step }
-}
-
 unsafe extern "C" fn rx_callback(transfer: *mut ffi::hackrf_transfer) -> c_int {
-    let src_buffer = slice::from_raw_parts_mut((*transfer).buffer, (*transfer).valid_length as usize);
+    let src_buffer = slice::from_raw_parts((*transfer).buffer, (*transfer).valid_length as usize);
     let shared_data: *mut RxSharedData = mem::transmute((*transfer).rx_ctx);
+
     let &RxSharedData(ref buffers, ref cvar) = &(*shared_data);
-    
     copy_to_next_buffer(src_buffer, &mut *buffers.lock().unwrap());
     cvar.notify_one();
-    
+
     0
 }
