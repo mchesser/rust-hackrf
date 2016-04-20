@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="generator" content="rustdoc">
+    <meta name="description" content="API documentation for the Rust `RxStream` struct in crate `hackrf`.">
+    <meta name="keywords" content="rust, rustlang, rust-lang, RxStream">
+
+    <title>hackrf::RxStream - Rust</title>
+
+    <link rel="stylesheet" type="text/css" href="../rustdoc.css">
+    <link rel="stylesheet" type="text/css" href="../main.css">
+    
+
+    
+    
+</head>
+<body class="rustdoc">
+    <!--[if lte IE 8]>
+    <div class="warning">
+        This old browser is unsupported and will most likely display funky
+        things.
+    </div>
+    <![endif]-->
+
+    
+
+    <nav class="sidebar">
+        
+        <p class='location'><a href='index.html'>hackrf</a></p><script>window.sidebarCurrent = {name: 'RxStream', ty: 'struct', relpath: ''};</script><script defer src="sidebar-items.js"></script>
+    </nav>
+
+    <nav class="sub">
+        <form class="search-form js-only">
+            <div class="search-container">
+                <input class="search-input" name="search"
+                       autocomplete="off"
+                       placeholder="Click or press ‘S’ to search, ‘?’ for more options…"
+                       type="search">
+            </div>
+        </form>
+    </nav>
+
+    <section id='main' class="content struct">
+<h1 class='fqn'><span class='in-band'>Struct <a href='index.html'>hackrf</a>::<wbr><a class='struct' href=''>RxStream</a></span><span class='out-of-band'><span id='render-detail'>
+                   <a id="toggle-all-docs" href="javascript:void(0)" title="collapse all docs">
+                       [<span class='inner'>&#x2212;</span>]
+                   </a>
+               </span><a id='src-104' class='srclink' href='../src/hackrf/src/lib.rs.html#318-324' title='goto source code'>[src]</a></span></h1>
+<pre class='rust struct'>pub struct RxStream&lt;'a&gt; {
+    // some fields omitted
+}</pre><div class='docblock'><p>A structure that manages receiving I/Q samples from the HackRF.</p>
+
+<h2 id='implementation-details' class='section-header'><a href='#implementation-details'>Implementation details</a></h2>
+<p>To obtain samples from the HackRF <code>libhackrf</code> requires that users register a callback which is
+called whenever a new block of samples avaliable from the underlying USB API. This interface,
+while powerful, is somewhat difficult to use. Instead of trying to expose this interface in a
+safe way, this library instead builds a blocking stream abstraction.</p>
+
+<p>Internally, this library does the following:</p>
+
+<ul>
+<li>First, it creates a set of shared buffers, with an associated Mutex and Condvar and registers
+a RX callback with <code>libhackrf</code> that has access to the shared buffers. Multiple shared buffers
+are used to reduce the chance that samples will need to be overwritten due to processing
+delays.</li>
+<li>The registered callback is called by <code>libhackrf</code> whenever more samples are avaliable and
+simply copies that samples into the next free shared buffer, and signals that a new set of
+samples is avaliable using the Condvar.</li>
+<li>On the consumer side, when one of the <code>next_sample</code> functions is called the function checks if
+any samples are avaliable in its local buffer, if not it will attempt to obtain new samples
+from the shared buffer. If there are new samples avaliable, the oldest shared buffer is copied
+into the local buffer and handled as normal. Otherwise the function will block until new
+new samples are avaliable using the Condvar. The local buffer is used to reduce the
+synchronization overhead of using a shared buffer.</li>
+</ul>
+</div><h2 id='methods'>Methods</h2><h3 class='impl'><code>impl&lt;'a&gt; <a class='struct' href='../hackrf/struct.RxStream.html' title='hackrf::RxStream'>RxStream</a>&lt;'a&gt;</code></h3><div class='impl-items'><h4 id='method.next_sample' class='method'><code>fn <a href='#method.next_sample' class='fnname'>next_sample</a>(&amp;mut self) -&gt; <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>(</a><a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.f32.html'>f32</a>, <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.f32.html'>f32</a><a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>)</a></code></h4>
+<div class='docblock'><p>Return the next I/Q sample converted to a floating point number, using a lookup table.</p>
+</div><h4 id='method.next_sample_raw' class='method'><code>fn <a href='#method.next_sample_raw' class='fnname'>next_sample_raw</a>(&amp;mut self) -&gt; <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>(</a><a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.u8.html'>u8</a>, <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.u8.html'>u8</a><a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>)</a></code></h4>
+<div class='docblock'><p>Return the next raw I/Q sample from the HackRF.</p>
+</div></div><h2 id='implementations'>Trait Implementations</h2><h3 class='impl'><code>impl&lt;'a&gt; <a class='trait' href='https://doc.rust-lang.org/nightly/core/ops/trait.Drop.html' title='core::ops::Drop'>Drop</a> for <a class='struct' href='../hackrf/struct.RxStream.html' title='hackrf::RxStream'>RxStream</a>&lt;'a&gt;</code></h3><div class='impl-items'><h4 id='method.drop' class='method'><code>fn <a href='https://doc.rust-lang.org/nightly/core/ops/trait.Drop.html#tymethod.drop' class='fnname'>drop</a>(&amp;mut self)</code></h4>
+</div></section>
+    <section id='search' class="content hidden"></section>
+
+    <section class="footer"></section>
+
+    <aside id="help" class="hidden">
+        <div>
+            <h1 class="hidden">Help</h1>
+
+            <div class="shortcuts">
+                <h2>Keyboard Shortcuts</h2>
+
+                <dl>
+                    <dt>?</dt>
+                    <dd>Show this help dialog</dd>
+                    <dt>S</dt>
+                    <dd>Focus the search field</dd>
+                    <dt>&larrb;</dt>
+                    <dd>Move up in search results</dd>
+                    <dt>&rarrb;</dt>
+                    <dd>Move down in search results</dd>
+                    <dt>&#9166;</dt>
+                    <dd>Go to active search result</dd>
+                </dl>
+            </div>
+
+            <div class="infos">
+                <h2>Search Tricks</h2>
+
+                <p>
+                    Prefix searches with a type followed by a colon (e.g.
+                    <code>fn:</code>) to restrict the search to a given type.
+                </p>
+
+                <p>
+                    Accepted types are: <code>fn</code>, <code>mod</code>,
+                    <code>struct</code>, <code>enum</code>,
+                    <code>trait</code>, <code>type</code>, <code>macro</code>,
+                    and <code>const</code>.
+                </p>
+
+                <p>
+                    Search functions by type signature (e.g.
+                    <code>vec -> usize</code> or <code>* -> vec</code>)
+                </p>
+            </div>
+        </div>
+    </aside>
+
+    
+
+    <script>
+        window.rootPath = "../";
+        window.currentCrate = "hackrf";
+        window.playgroundUrl = "";
+    </script>
+    <script src="../jquery.js"></script>
+    <script src="../main.js"></script>
+    
+    <script defer src="../search-index.js"></script>
+</body>
+</html>

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="generator" content="rustdoc">
+    <meta name="description" content="API documentation for the Rust `HackRF` struct in crate `hackrf`.">
+    <meta name="keywords" content="rust, rustlang, rust-lang, HackRF">
+
+    <title>hackrf::HackRF - Rust</title>
+
+    <link rel="stylesheet" type="text/css" href="../rustdoc.css">
+    <link rel="stylesheet" type="text/css" href="../main.css">
+    
+
+    
+    
+</head>
+<body class="rustdoc">
+    <!--[if lte IE 8]>
+    <div class="warning">
+        This old browser is unsupported and will most likely display funky
+        things.
+    </div>
+    <![endif]-->
+
+    
+
+    <nav class="sidebar">
+        
+        <p class='location'><a href='index.html'>hackrf</a></p><script>window.sidebarCurrent = {name: 'HackRF', ty: 'struct', relpath: ''};</script><script defer src="sidebar-items.js"></script>
+    </nav>
+
+    <nav class="sub">
+        <form class="search-form js-only">
+            <div class="search-container">
+                <input class="search-input" name="search"
+                       autocomplete="off"
+                       placeholder="Click or press ‘S’ to search, ‘?’ for more options…"
+                       type="search">
+            </div>
+        </form>
+    </nav>
+
+    <section id='main' class="content struct">
+<h1 class='fqn'><span class='in-band'>Struct <a href='index.html'>hackrf</a>::<wbr><a class='struct' href=''>HackRF</a></span><span class='out-of-band'><span id='render-detail'>
+                   <a id="toggle-all-docs" href="javascript:void(0)" title="collapse all docs">
+                       [<span class='inner'>&#x2212;</span>]
+                   </a>
+               </span><a id='src-44' class='srclink' href='../src/hackrf/src/lib.rs.html#179-182' title='goto source code'>[src]</a></span></h1>
+<pre class='rust struct'>pub struct HackRF {
+    // some fields omitted
+}</pre><div class='docblock'><p>A structure for managaing a HackRF device.</p>
+
+<p>This structure contains methods for configuring the various settings of the HackRF. It also
+provides a method for managing received samples as a blocking stream. Currently transmitting
+samples and non-blocking streams are not supported.</p>
+
+<h2 id='implementation-notes' class='section-header'><a href='#implementation-notes'>Implementation notes</a></h2>
+<p>This library is a lightweight wrapper around the basic HackRF FFI interface. In addition to
+the basic functionality it provides a blocking stream interface for receiving samples (See:
+<a href="./struct.RxStream.html"><code>RxStream</code></a>).</p>
+
+<p>Rust&#39;s type system is used to ensure that resources are not destroy or modified while the HackRF
+is receiving samples (although it is possible there are problems with the implementation.). To
+stop receiving samples it is sufficient to let the stream drop out of scope. For example:</p>
+
+<pre class='rust rust-example-rendered'>
+<span class='kw'>let</span> <span class='ident'>context</span> <span class='op'>=</span> <span class='macro'>try</span><span class='macro'>!</span>(<span class='ident'>hackrf</span>::<span class='ident'>init</span>());
+<span class='kw'>let</span> <span class='kw-2'>mut</span> <span class='ident'>device</span> <span class='op'>=</span> <span class='macro'>try</span><span class='macro'>!</span>(<span class='ident'>HackRF</span>::<span class='ident'>open</span>(<span class='kw-2'>&amp;</span><span class='ident'>context</span>));
+
+<span class='comment'>// Configure HackRF</span>
+
+{
+    <span class='kw'>let</span> <span class='kw-2'>mut</span> <span class='ident'>rx_stream</span> <span class='op'>=</span> <span class='macro'>try</span><span class='macro'>!</span>(<span class='ident'>device</span>.<span class='ident'>rx_stream</span>());
+    <span class='comment'>// Get samples from rx stream</span>
+}
+
+<span class='comment'>// Re-configure HackRF</span>
+
+{
+    <span class='kw'>let</span> <span class='kw-2'>mut</span> <span class='ident'>rx_stream</span> <span class='op'>=</span> <span class='macro'>try</span><span class='macro'>!</span>(<span class='ident'>device</span>.<span class='ident'>rx_stream</span>());
+    <span class='comment'>// Get samples from rx stream</span>
+}</pre>
+</div><h2 id='methods'>Methods</h2><h3 class='impl'><code>impl <a class='struct' href='../hackrf/struct.HackRF.html' title='hackrf::HackRF'>HackRF</a></code></h3><div class='impl-items'><h4 id='method.open' class='method'><code>fn <a href='#method.open' class='fnname'>open</a>(context: &amp;<a class='struct' href='../hackrf/struct.HackRFContext.html' title='hackrf::HackRFContext'>HackRFContext</a>) -&gt; <a class='type' href='../hackrf/type.HackRFResult.html' title='hackrf::HackRFResult'>HackRFResult</a>&lt;<a class='struct' href='../hackrf/struct.HackRF.html' title='hackrf::HackRF'>HackRF</a>&gt;</code></h4>
+<div class='docblock'><p>Attempt to open a connected HackRF device.</p>
+</div><h4 id='method.set_freq' class='method'><code>fn <a href='#method.set_freq' class='fnname'>set_freq</a>(&amp;mut self, freq: <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.u64.html'>u64</a>) -&gt; <a class='type' href='../hackrf/type.HackRFResult.html' title='hackrf::HackRFResult'>HackRFResult</a>&lt;<a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>()</a>&gt;</code></h4>
+<div class='docblock'><p>Sets the center frequency (in Hz) of the HackRF: 5-6800 MHz.</p>
+</div><h4 id='method.set_amp_enable' class='method'><code>fn <a href='#method.set_amp_enable' class='fnname'>set_amp_enable</a>(&amp;mut self, amp_enable: <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.bool.html'>bool</a>) -&gt; <a class='type' href='../hackrf/type.HackRFResult.html' title='hackrf::HackRFResult'>HackRFResult</a>&lt;<a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>()</a>&gt;</code></h4>
+<div class='docblock'><p>Sets amp gain to on/off.</p>
+
+<p>Warning: Enabling this in the presence of high power signals could damage the HackRF.</p>
+</div><h4 id='method.set_antenna_enable' class='method'><code>fn <a href='#method.set_antenna_enable' class='fnname'>set_antenna_enable</a>(&amp;mut self, antenna_enable: <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.bool.html'>bool</a>) -&gt; <a class='type' href='../hackrf/type.HackRFResult.html' title='hackrf::HackRFResult'>HackRFResult</a>&lt;<a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>()</a>&gt;</code></h4>
+<div class='docblock'><p>Set antenna enable to on/off.</p>
+</div><h4 id='method.set_lna_gain' class='method'><code>fn <a href='#method.set_lna_gain' class='fnname'>set_lna_gain</a>(&amp;mut self, gain: <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.u32.html'>u32</a>) -&gt; <a class='type' href='../hackrf/type.HackRFResult.html' title='hackrf::HackRFResult'>HackRFResult</a>&lt;<a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>()</a>&gt;</code></h4>
+<div class='docblock'><p>Set LNA gain: 0-40 dB, 8dB steps.
+If the specified gain falls outside of the valid range, the gain will be clamped.</p>
+</div><h4 id='method.set_vga_gain' class='method'><code>fn <a href='#method.set_vga_gain' class='fnname'>set_vga_gain</a>(&amp;mut self, gain: <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.u32.html'>u32</a>) -&gt; <a class='type' href='../hackrf/type.HackRFResult.html' title='hackrf::HackRFResult'>HackRFResult</a>&lt;<a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>()</a>&gt;</code></h4>
+<div class='docblock'><p>Set VGA (IF) gain: 0-62 dB, with 2dB steps.
+If the specified gain falls outside of the valid range, the gain will be clamped.</p>
+</div><h4 id='method.set_samp_rate' class='method'><code>fn <a href='#method.set_samp_rate' class='fnname'>set_samp_rate</a>(&amp;mut self, samp_rate: <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.f64.html'>f64</a>) -&gt; <a class='type' href='../hackrf/type.HackRFResult.html' title='hackrf::HackRFResult'>HackRFResult</a>&lt;<a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>()</a>&gt;</code></h4>
+<div class='docblock'><p>Sets the sample rate in Hz: 2-20 MHz.</p>
+</div><h4 id='method.set_baseband_filter_bw' class='method'><code>fn <a href='#method.set_baseband_filter_bw' class='fnname'>set_baseband_filter_bw</a>(&amp;mut self, filter_bw: <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.u32.html'>u32</a>) -&gt; <a class='type' href='../hackrf/type.HackRFResult.html' title='hackrf::HackRFResult'>HackRFResult</a>&lt;<a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>()</a>&gt;</code></h4>
+<div class='docblock'><p>Sets the baseband filter bandwidth.</p>
+
+<p>Note: This must be performed <em>after</em> setting the sample rate.</p>
+</div><h4 id='method.rx_stream' class='method'><code>fn <a href='#method.rx_stream' class='fnname'>rx_stream</a>(&amp;mut self) -&gt; <a class='type' href='../hackrf/type.HackRFResult.html' title='hackrf::HackRFResult'>HackRFResult</a>&lt;<a class='struct' href='../hackrf/struct.RxStream.html' title='hackrf::RxStream'>RxStream</a>&gt;</code></h4>
+<div class='docblock'><p>Start an RX stream.</p>
+</div></div><h2 id='implementations'>Trait Implementations</h2><h3 class='impl'><code>impl <a class='trait' href='https://doc.rust-lang.org/nightly/core/ops/trait.Drop.html' title='core::ops::Drop'>Drop</a> for <a class='struct' href='../hackrf/struct.HackRF.html' title='hackrf::HackRF'>HackRF</a></code></h3><div class='impl-items'><h4 id='method.drop' class='method'><code>fn <a href='https://doc.rust-lang.org/nightly/core/ops/trait.Drop.html#tymethod.drop' class='fnname'>drop</a>(&amp;mut self)</code></h4>
+</div></section>
+    <section id='search' class="content hidden"></section>
+
+    <section class="footer"></section>
+
+    <aside id="help" class="hidden">
+        <div>
+            <h1 class="hidden">Help</h1>
+
+            <div class="shortcuts">
+                <h2>Keyboard Shortcuts</h2>
+
+                <dl>
+                    <dt>?</dt>
+                    <dd>Show this help dialog</dd>
+                    <dt>S</dt>
+                    <dd>Focus the search field</dd>
+                    <dt>&larrb;</dt>
+                    <dd>Move up in search results</dd>
+                    <dt>&rarrb;</dt>
+                    <dd>Move down in search results</dd>
+                    <dt>&#9166;</dt>
+                    <dd>Go to active search result</dd>
+                </dl>
+            </div>
+
+            <div class="infos">
+                <h2>Search Tricks</h2>
+
+                <p>
+                    Prefix searches with a type followed by a colon (e.g.
+                    <code>fn:</code>) to restrict the search to a given type.
+                </p>
+
+                <p>
+                    Accepted types are: <code>fn</code>, <code>mod</code>,
+                    <code>struct</code>, <code>enum</code>,
+                    <code>trait</code>, <code>type</code>, <code>macro</code>,
+                    and <code>const</code>.
+                </p>
+
+                <p>
+                    Search functions by type signature (e.g.
+                    <code>vec -> usize</code> or <code>* -> vec</code>)
+                </p>
+            </div>
+        </div>
+    </aside>
+
+    
+
+    <script>
+        window.rootPath = "../";
+        window.currentCrate = "hackrf";
+        window.playgroundUrl = "";
+    </script>
+    <script src="../jquery.js"></script>
+    <script src="../main.js"></script>
+    
+    <script defer src="../search-index.js"></script>
+</body>
+</html>
