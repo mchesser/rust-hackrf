@@ -1,6 +1,4 @@
-//! # HackRF
-//!
-//! A library for interacting with a HackRF.
+//! A library for interacting with a HackRF device.
 //!
 //! ## Examples
 //! ```
@@ -17,9 +15,9 @@
 //! }
 //!
 //! fn run() -> HackRFResult<()> {
-//!     try!(hackrf::init());
+//!     let context = try!(hackrf::init());
 //!
-//!     let mut device = try!(HackRF::open());
+//!     let mut device = try!(HackRF::open(&context));
 //!     try!(device.set_samp_rate(SAMP_RATE as f64));
 //!     try!(device.set_freq(150_000_000));
 //!
@@ -31,7 +29,6 @@
 //!         // .. Do something with samples ..
 //!     }
 //!
-//!     try!(hackrf::exit());
 //!     Ok(())
 //! }
 //! ```
@@ -43,6 +40,7 @@ use std::os::raw::{c_int, c_void};
 
 use std::sync::{Mutex, Condvar};
 use std::{mem, slice, ops};
+use std::rc::Rc;
 
 use ffi::hackrf_error::*;
 
@@ -64,10 +62,28 @@ macro_rules! hackrf_try {
 }
 
 /// A error that can occur when trying to interact with a HackRF device.
+///
+/// ## Possible Error Values
+///
+///     HACKRF_ERROR_INVALID_PARAM = -2
+///     HACKRF_ERROR_NOT_FOUND = -5
+///     HACKRF_ERROR_BUSY = -6
+///     HACKRF_ERROR_NO_MEM = -11
+///     HACKRF_ERROR_LIBUSB = -1000
+///     HACKRF_ERROR_THREAD = -1001
+///     HACKRF_ERROR_STREAMING_THREAD_ERR = -1002
+///     HACKRF_ERROR_STREAMING_STOPPED = -1003
+///     HACKRF_ERROR_STREAMING_EXIT_CALLED = -1004
+///     HACKRF_ERROR_OTHER = -9999
+///
+/// See [libhackrf](https://github.com/mossmann/hackrf/tree/master/host/libhackrf) for more info.
 #[derive(Debug)]
 pub struct HackRFError {
+    /// The description of the code.
     pub desc: String,
-    pub code: i32
+
+    /// The code returned by `libhackrf`.
+    pub code: i32,
 }
 
 /// A specialized Result type for HackRF operations
@@ -79,7 +95,7 @@ fn parse_error(error_code: ffi::hackrf_error) -> HackRFError {
         let desc = CStr::from_ptr(ffi::hackrf_error_name(error_code)).to_string_lossy();
         HackRFError {
             desc: desc.to_string(),
-            code: error_code as i32
+            code: error_code as i32,
         }
     }
 }
@@ -91,26 +107,78 @@ fn adjust_gain(gain: u32, min: u32, max: u32, step: u32) -> u32 {
     else { (gain as f32 / step as f32).round() as u32 * step }
 }
 
-/// Initialize the HackRF library
-pub fn init() -> HackRFResult<()> {
+/// The HackRF context.
+///
+/// This struct is used ensure that `libhackrf` is initialized before it can be used. A context can
+/// be obtained by calling hackrf::init().
+///
+/// ## Example
+/// ```
+/// let context = try!(hackrf::init());
+/// // Use context
+/// ```
+pub struct HackRFContext(Rc<HackRFContextInner>);
+
+/// Value for keeping track of any object that contains a reference to the context.
+///
+/// When this value is dropped, `libhackrf` will be closed.
+struct HackRFContextInner;
+
+impl Drop for HackRFContextInner {
+    fn drop(&mut self) {
+        unsafe {
+            ffi::hackrf_exit();
+        }
+    }
+}
+
+/// Initialize `libhackrf`, returning a context that can be used to connect to HackRF devices.
+/// Once all references to the returned context go out of scope, the library will be closed
+/// automatically.
+pub fn init() -> HackRFResult<HackRFContext> {
     unsafe {
         hackrf_try!(ffi::hackrf_init());
     }
-    Ok(())
+    Ok(HackRFContext(Rc::new(HackRFContextInner)))
 }
 
-
-/// Exit the HackRF library
-pub fn exit() -> HackRFResult<()> {
-    unsafe {
-        hackrf_try!(ffi::hackrf_exit());
-    }
-    Ok(())
-}
-
-/// A HackRF device
+/// A structure for managaing a HackRF device.
+///
+/// This structure contains methods for configuring the various settings of the HackRF. It also
+/// provides a method for managing received samples as a blocking stream. Currently transmitting
+/// samples and non-blocking streams are not supported.
+///
+/// ## Implementation notes
+///
+/// This library is a lightweight wrapper around the basic HackRF FFI interface. In addition to
+/// the basic functionality it provides a blocking stream interface for receiving samples (See:
+/// [`RxStream`](./struct.RxStream.html)).
+///
+/// Rust's type system is used to ensure that resources are not destroy or modified while the HackRF
+/// is receiving samples (although it is possible there are problems with the implementation.). To
+/// stop receiving samples it is sufficient to let the stream drop out of scope. For example:
+///
+/// ```
+/// let context = try!(hackrf::init());
+/// let mut device = try!(HackRF::open(&context));
+///
+/// // Configure HackRF
+///
+/// {
+///     let mut rx_stream = try!(device.rx_stream());
+///     // Get samples from rx stream
+/// }
+///
+/// // Re-configure HackRF
+///
+/// {
+///     let mut rx_stream = try!(device.rx_stream());
+///     // Get samples from rx stream
+/// }
+/// ```
 pub struct HackRF {
-    inner: *mut ffi::hackrf_device
+    inner: *mut ffi::hackrf_device,
+    _context: Rc<HackRFContextInner>,
 }
 
 impl Drop for HackRF {
@@ -122,25 +190,16 @@ impl Drop for HackRF {
 }
 
 impl HackRF {
-    /// Attempt to open a connected HackRF device
-    pub fn open() -> HackRFResult<HackRF> {
+    /// Attempt to open a connected HackRF device.
+    pub fn open(context: &HackRFContext) -> HackRFResult<HackRF> {
         unsafe {
             let mut device = std::mem::zeroed();
             hackrf_try!(ffi::hackrf_open(&mut device));
-            Ok(HackRF { inner: device })
+            Ok(HackRF { inner: device, _context: context.0.clone() })
         }
     }
 
-    /// Closes the current HackRF device
-    pub fn close(self) -> HackRFResult<()> {
-        unsafe {
-            hackrf_try!(ffi::hackrf_close(self.inner));
-            mem::forget(self);
-        }
-        Ok(())
-    }
-
-    /// Sets the center frequency (in Hz) of the HackRF: 5-6800 MHz
+    /// Sets the center frequency (in Hz) of the HackRF: 5-6800 MHz.
     pub fn set_freq(&mut self, freq: u64) -> HackRFResult<()> {
         // TODO: Consider checking that the frequency is in a valid range.
         unsafe {
@@ -149,7 +208,8 @@ impl HackRF {
         Ok(())
     }
 
-    /// Sets amp gain to on/off
+    /// Sets amp gain to on/off.
+    ///
     /// Warning: Enabling this in the presence of high power signals could damage the HackRF.
     pub fn set_amp_enable(&mut self, amp_enable: bool) -> HackRFResult<()> {
         unsafe {
@@ -169,7 +229,7 @@ impl HackRF {
     }
 
     /// Set LNA gain: 0-40 dB, 8dB steps.
-    /// If the specified gain falls outside of the valid range, the gain will be clamped
+    /// If the specified gain falls outside of the valid range, the gain will be clamped.
     pub fn set_lna_gain(&mut self, gain: u32) -> HackRFResult<()> {
         unsafe {
             hackrf_try!(ffi::hackrf_set_lna_gain(self.inner, adjust_gain(gain, 0, 40, 8)));
@@ -178,7 +238,7 @@ impl HackRF {
     }
 
     /// Set VGA (IF) gain: 0-62 dB, with 2dB steps.
-    /// If the specified gain falls outside of the valid range, the gain will be clamped
+    /// If the specified gain falls outside of the valid range, the gain will be clamped.
     pub fn set_vga_gain(&mut self, gain: u32) -> HackRFResult<()> {
         unsafe {
             hackrf_try!(ffi::hackrf_set_vga_gain(self.inner, adjust_gain(gain, 0, 62, 2)));
@@ -186,7 +246,7 @@ impl HackRF {
         Ok(())
     }
 
-    /// Sets the sample rate in Hz: 2-20 MHz
+    /// Sets the sample rate in Hz: 2-20 MHz.
     pub fn set_samp_rate(&mut self, samp_rate: f64) -> HackRFResult<()> {
         unsafe {
             hackrf_try!(ffi::hackrf_set_sample_rate(self.inner, samp_rate));
@@ -200,6 +260,7 @@ impl HackRF {
 
 
     /// Sets the baseband filter bandwidth.
+    ///
     /// Note: This must be performed *after* setting the sample rate.
     pub fn set_baseband_filter_bw(&mut self, filter_bw: u32) -> HackRFResult<()> {
         unsafe {
@@ -209,7 +270,7 @@ impl HackRF {
         Ok(())
     }
 
-    /// Start an RX stream
+    /// Start an RX stream.
     pub fn rx_stream(&mut self) -> HackRFResult<RxStream> {
         let buffers = TransferBuffers::new(NUM_BUFFERS);
         let shared_data = {
@@ -230,7 +291,30 @@ impl HackRF {
     }
 }
 
-/// A structure that manages receiving I/Q samples from the HackRF
+/// A structure that manages receiving I/Q samples from the HackRF.
+///
+/// ## Implementation details
+///
+/// To obtain samples from the HackRF `libhackrf` requires that users register a callback which is
+/// called whenever a new block of samples avaliable from the underlying USB API. This interface,
+/// while powerful, is somewhat difficult to use. Instead of trying to expose this interface in a
+/// safe way, this library instead builds a blocking stream abstraction.
+///
+/// Internally, this library does the following:
+///
+/// - First, it creates a set of shared buffers, with an associated Mutex and Condvar and registers
+///   a RX callback with `libhackrf` that has access to the shared buffers. Multiple shared buffers
+///   are used to reduce the chance that samples will need to be overwritten due to processing
+///   delays.
+/// - The registered callback is called by `libhackrf` whenever more samples are avaliable and
+///   simply copies that samples into the next free shared buffer, and signals that a new set of
+///   samples is avaliable using the Condvar.
+/// - On the consumer side, when one of the `next_sample` functions is called the function checks if
+///   any samples are avaliable in its local buffer, if not it will attempt to obtain new samples
+///   from the shared buffer. If there are new samples avaliable, the oldest shared buffer is copied
+///   into the local buffer and handled as normal. Otherwise the function will block until new
+///   new samples are avaliable using the Condvar. The local buffer is used to reduce the
+///   synchronization overhead of using a shared buffer.
 pub struct RxStream<'a> {
     local_index: usize,
     local_buffer: StackVec,
@@ -259,7 +343,7 @@ impl<'a> RxStream<'a> {
         }
     }
 
-    /// Return the next I/Q sample converted to a floating point number.
+    /// Return the next I/Q sample converted to a floating point number, using a lookup table.
     pub fn next_sample(&mut self) -> (f32, f32) {
         let (raw_i, raw_q) = self.next_sample_raw();
         (self.lookup_table[raw_i as usize], self.lookup_table[raw_q as usize])

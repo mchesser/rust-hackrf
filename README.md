@@ -21,9 +21,9 @@ fn main() {
 }
 
 fn run() -> HackRFResult<()> {
-    try!(hackrf::init());
+    let context = try!(hackrf::init());
 
-    let mut device = try!(HackRF::open());
+    let mut device = try!(HackRF::open(&context));
     try!(device.set_samp_rate(SAMP_RATE as f64));
     try!(device.set_freq(150_000_000));
 
@@ -35,7 +35,6 @@ fn run() -> HackRFResult<()> {
         // .. Do something with samples ..
     }
 
-    try!(hackrf::exit());
     Ok(())
 }
 ```
