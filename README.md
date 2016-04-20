@@ -5,6 +5,10 @@ A library for interacting with a HackRF. This library is still very much a work 
 could have significant bugs. In particular it contains a significant amount of unsafe code that
 has not been thoroughly review.
 
+## Documentation
+
+ - [Link](http://mchesser.github.io/rust-hackrf/doc/hackrf/index.html)
+
 ## Examples
 
 ```rust
