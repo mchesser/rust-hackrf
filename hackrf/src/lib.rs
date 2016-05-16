@@ -351,7 +351,7 @@ impl<'a> RxStream<'a> {
 
     /// Return the next raw I/Q sample from the HackRF.
     pub fn next_sample_raw(&mut self) -> (u8, u8) {
-        if self.local_index + 1 < self.local_buffer.len() {
+        if self.local_buffer.len() < self.local_index + 1 {
             let &RxSharedData(ref buffers, ref cvar) = unsafe { &(*self.shared_data) };
 
             // Obtain a lock to the data buffers.
