@@ -271,61 +271,30 @@ impl HackRF {
     }
 
     /// Start an RX stream.
-    pub fn rx_stream(&mut self) -> HackRFResult<RxStream> {
-        let buffers = TransferBuffers::new(NUM_BUFFERS);
-        let shared_data = {
-            let data = Box::new(RxSharedData(Mutex::new(buffers), Condvar::new()));
-            Box::into_raw(data)
-        };
-
+    pub fn rx_stream(&mut self, bound: usize) -> HackRFResult<RxStream> {
+        let rx_stream = RxStream::new(bound, self);
         unsafe {
-            match ffi::hackrf_start_rx(self.inner, rx_callback, shared_data as *mut c_void) {
-                HACKRF_SUCCESS => Ok(RxStream::new(shared_data, self)),
-                error => {
-                    // Ensure the allocated data gets deallocated correctly.
-                    mem::drop(Box::from_raw(shared_data));
-                    Err(parse_error(error))
-                }
+            match ffi::hackrf_start_rx(self.inner, rx_callback, &rx_stream.sender as *mut c_void) {
+                HACKRF_SUCCESS => Ok(rx_stream),
+                error => Err(parse_error(error)),
             }
         }
     }
 }
 
 /// A structure that manages receiving I/Q samples from the HackRF.
-///
-/// ## Implementation details
-///
-/// To obtain samples from the HackRF `libhackrf` requires that users register a callback which is
-/// called whenever a new block of samples avaliable from the underlying USB API. This interface,
-/// while powerful, is somewhat difficult to use. Instead of trying to expose this interface in a
-/// safe way, this library instead builds a blocking stream abstraction.
-///
-/// Internally, this library does the following:
-///
-/// - First, it creates a set of shared buffers, with an associated Mutex and Condvar and registers
-///   a RX callback with `libhackrf` that has access to the shared buffers. Multiple shared buffers
-///   are used to reduce the chance that samples will need to be overwritten due to processing
-///   delays.
-/// - The registered callback is called by `libhackrf` whenever more samples are avaliable and
-///   simply copies that samples into the next free shared buffer, and signals that a new set of
-///   samples is avaliable using the Condvar.
-/// - On the consumer side, when one of the `next_sample` functions is called the function checks if
-///   any samples are avaliable in its local buffer, if not it will attempt to obtain new samples
-///   from the shared buffer. If there are new samples avaliable, the oldest shared buffer is copied
-///   into the local buffer and handled as normal. Otherwise the function will block until new
-///   new samples are avaliable using the Condvar. The local buffer is used to reduce the
-///   synchronization overhead of using a shared buffer.
 pub struct RxStream<'a> {
-    local_index: usize,
-    local_buffer: StackVec,
-    shared_data: *mut RxSharedData,
     hackrf_device: &'a mut HackRF,
     lookup_table: [f32; 256],
+    local_index: usize,
+    local_buffer: StackVec,
+    sender: UnsafeCell<SyncSender<StackVec>>
+    receiver: Receiver<StackVec>,
 }
 
 impl<'a> RxStream<'a> {
     /// Create a new instance of a RxStream
-    fn new(shared_data: *mut RxSharedData, hackrf_device: &'a mut HackRF) -> RxStream<'a> {
+    fn new(bound: usize, hackrf_device: &'a mut HackRF) -> RxStream<'a> {
         fn gen_lookup_table() -> [f32; 256] {
             let mut data = [0.0; 256];
             for i in 0..256 {
@@ -334,47 +303,38 @@ impl<'a> RxStream<'a> {
             data
         }
 
+        let (sender, receiver) = sync_channel(bound);
         RxStream {
-            local_index: 0,
-            local_buffer: StackVec::new(),
-            shared_data: shared_data,
             hackrf_device: hackrf_device,
             lookup_table: gen_lookup_table()
+            local_index: 0,
+            local_buffer: StackVec::new(),
+            sender: UnsafeCell::new(sender),
+            receiver: receiver,
         }
     }
 
-    /// Return the next I/Q sample converted to a floating point number, using a lookup table.
-    pub fn next_sample(&mut self) -> (f32, f32) {
-        let (raw_i, raw_q) = self.next_sample_raw();
-        (self.lookup_table[raw_i as usize], self.lookup_table[raw_q as usize])
+    /// Return the next I/Q sample converted to floating point numbers. If there is no data
+    /// avaliable, then this function is blocking.
+    pub fn next_sample(&mut self) -> Option<(f32, f32)> {
+        let sample = self.next_sample_raw();
+        sample.map(|(i, q)| (self.lookup_table[i as usize], self.lookup_table[q as usize]))
     }
 
-    /// Return the next raw I/Q sample from the HackRF.
-    pub fn next_sample_raw(&mut self) -> (u8, u8) {
+    /// Return the next raw I/Q sample from the HackRF. If there is no data avaliable, then this
+    /// function is blocking.
+    pub fn next_sample_raw(&mut self) -> Option<(u8, u8)> {
         if self.local_buffer.len() < self.local_index + 1 {
-            let &RxSharedData(ref buffers, ref cvar) = unsafe { &(*self.shared_data) };
-
-            // Obtain a lock to the data buffers.
-            let mut buffers = {
-                let mut lock = buffers.lock().unwrap();
-                while lock.used == 0 {
-                    // If there is no data to read, then wait for data to arrive
-                    lock = cvar.wait(lock).unwrap();
-                }
-                lock
+            self.local_buffer = match self.receiver.recv() {
+                Ok(buffer) => buffer,
+                Err(_) => return None,
             };
-
-            // Get the oldest shared data and copy it into the local buffer.
-            let index = buffers.head;
-            self.local_buffer.copy_slice(&buffers.data[index]);
-            buffers.used -= 1;
-
             self.local_index = 0;
         }
 
         let i = self.local_index;
         self.local_index += 2;
-        (self.local_buffer[i], self.local_buffer[i + 1])
+        Ok((self.local_buffer[i], self.local_buffer[i + 1]))
     }
 }
 
@@ -383,7 +343,6 @@ impl<'a> Drop for RxStream<'a> {
         unsafe {
             // TODO: investigate if this can ever fail under reasonable conditions
             ffi::hackrf_stop_rx(self.hackrf_device.inner);
-            mem::drop(Box::from_raw(self.shared_data));
         }
     }
 }
@@ -408,7 +367,7 @@ impl StackVec {
     /// Copy a slice into the vector, setting the vectors length to the length of the slice.
     /// Panics if the slice is too large.
     fn copy_slice(&mut self, slice: &[u8]) {
-        self.data[0..slice.len()].clone_from_slice(slice);
+        self.data[0..slice.len()].copy_from_slice(slice);
         self.len = slice.len();
     }
 }
@@ -421,45 +380,33 @@ impl ops::Deref for StackVec {
     }
 }
 
-/// Data buffers for maintaining the currently stored samples
-struct TransferBuffers {
-    data: Vec<StackVec>,
-    head: usize,
-    used: usize,
-}
-
-impl TransferBuffers {
-    fn new(num_buffers: usize) -> TransferBuffers {
-        TransferBuffers {
-            data: (0..num_buffers).map(|_| StackVec::new()).collect(),
-            head: 0,
-            used: 0,
-        }
-    }
-
-    /// Copy the source buffer into the next free data buffer.
-    fn copy_to_next_buffer(&mut self, src_buffer: &[u8]) {
-        let dest_index = (self.head + self.used) %  self.data.len();
-        self.data[dest_index].copy_slice(src_buffer);
-
-        if self.used >= self.data.len() {
-            // Out of space in the buffer... Just overwrite old data for now...
-            self.head = (self.head + 1) % self.data.len();
-        }
-        else {
-            self.used += 1;
-        }
-    }
-}
-
-
+/// The call back that is used in the stream abstraction
 unsafe extern "C" fn rx_callback(transfer: *mut ffi::hackrf_transfer) -> c_int {
     let src_buffer = slice::from_raw_parts((*transfer).buffer, (*transfer).valid_length as usize);
-    let shared_data: *mut RxSharedData = mem::transmute((*transfer).rx_ctx);
 
-    let &RxSharedData(ref buffers, ref cvar) = &(*shared_data);
-    buffers.lock().unwrap().copy_to_next_buffer(src_buffer);
-    cvar.notify_one();
+    // If the input buffer is too long, then an error has occured somewhere
+    if src_buffer.len() > BUFFER_SIZE {
+        return -1;
+    }
 
+    // Copy the transferred data into an owned structure
+    let mut data = StackVec::new();
+    data.copy_slice(src_buffer);
+
+    let sender_cell: &UnsafeCell<SyncSender<StackVec>> = mem::transmute((*transfer).rx_ctx);
+    let sender = &mut *sender_cell.get();
+
+    if let Err(e) = receiver.try_send(data) {
+        match e {
+            // If the buffer is full just drop the message, it might be useful to consider logging
+            // in the future.
+            Full(_) => {},
+
+            // Report an error back to libhackrf
+            Disconnected(_) => return -1,
+        }
+    }
+
+    // Succesfully sent the data
     0
 }

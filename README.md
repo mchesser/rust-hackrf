@@ -1,9 +1,7 @@
 HackRF
 ====
 
-A library for interacting with a HackRF. This library is still very much a work in progress and
-could have significant bugs. In particular it contains a significant amount of unsafe code that
-has not been thoroughly review.
+A library for interacting with a HackRF. Currently only receiving is supported.
 
 ## Documentation
 
