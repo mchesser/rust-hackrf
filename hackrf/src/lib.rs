@@ -38,7 +38,9 @@ extern crate hackrf_sys as ffi;
 use std::ffi::CStr;
 use std::os::raw::{c_int, c_void};
 
-use std::sync::{Mutex, Condvar};
+use std::sync::mpsc::{SyncSender, Receiver, TrySendError, sync_channel};
+use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
+
 use std::{mem, slice, ops};
 use std::rc::Rc;
 
@@ -47,9 +49,6 @@ use ffi::hackrf_error::*;
 /// The maximum size of each of the buffers used for receiving.
 /// Note: this must be greater than or equal to the buffer size chosen for libusb.
 const BUFFER_SIZE: usize = 262144;
-
-/// The number of buffers to use to better handle overrun.
-const NUM_BUFFERS: usize = 5;
 
 /// An internal macro for handling hackrf errors.
 macro_rules! hackrf_try {
@@ -272,9 +271,10 @@ impl HackRF {
 
     /// Start an RX stream.
     pub fn rx_stream(&mut self, bound: usize) -> HackRFResult<RxStream> {
-        let rx_stream = RxStream::new(bound, self);
+        let mut rx_stream = RxStream::new(bound, self);
+        let sender = (&mut *rx_stream.sender) as *mut SyncSender<StackVec>;
         unsafe {
-            match ffi::hackrf_start_rx(self.inner, rx_callback, &rx_stream.sender as *mut c_void) {
+            match ffi::hackrf_start_rx(self.inner, rx_callback, sender as *mut c_void) {
                 HACKRF_SUCCESS => Ok(rx_stream),
                 error => Err(parse_error(error)),
             }
@@ -282,19 +282,21 @@ impl HackRF {
     }
 }
 
+static OVERFLOW_COUNT: AtomicUsize = ATOMIC_USIZE_INIT;
+
 /// A structure that manages receiving I/Q samples from the HackRF.
 pub struct RxStream<'a> {
-    hackrf_device: &'a mut HackRF,
+    hackrf_device: &'a HackRF,
     lookup_table: [f32; 256],
     local_index: usize,
     local_buffer: StackVec,
-    sender: UnsafeCell<SyncSender<StackVec>>
+    sender: Box<SyncSender<StackVec>>,
     receiver: Receiver<StackVec>,
 }
 
 impl<'a> RxStream<'a> {
     /// Create a new instance of a RxStream
-    fn new(bound: usize, hackrf_device: &'a mut HackRF) -> RxStream<'a> {
+    fn new(bound: usize, hackrf_device: &'a HackRF) -> RxStream<'a> {
         fn gen_lookup_table() -> [f32; 256] {
             let mut data = [0.0; 256];
             for i in 0..256 {
@@ -303,15 +305,23 @@ impl<'a> RxStream<'a> {
             data
         }
 
+        // Reset the overflow counter
+        OVERFLOW_COUNT.store(0, Ordering::Relaxed);
+
         let (sender, receiver) = sync_channel(bound);
         RxStream {
             hackrf_device: hackrf_device,
-            lookup_table: gen_lookup_table()
+            lookup_table: gen_lookup_table(),
             local_index: 0,
             local_buffer: StackVec::new(),
-            sender: UnsafeCell::new(sender),
+            sender: Box::new(sender),
             receiver: receiver,
         }
+    }
+
+    // Returns a reference to the internal receiver
+    pub fn receiver(&mut self) -> &mut Receiver<StackVec> {
+        &mut self.receiver
     }
 
     /// Return the next I/Q sample converted to floating point numbers. If there is no data
@@ -334,7 +344,12 @@ impl<'a> RxStream<'a> {
 
         let i = self.local_index;
         self.local_index += 2;
-        Ok((self.local_buffer[i], self.local_buffer[i + 1]))
+        Some((self.local_buffer[i], self.local_buffer[i + 1]))
+    }
+
+    /// Return how many times the stream dropped data frames
+    pub fn overflow_count(&self) -> usize {
+        OVERFLOW_COUNT.load(Ordering::Relaxed)
     }
 }
 
@@ -347,11 +362,8 @@ impl<'a> Drop for RxStream<'a> {
     }
 }
 
-/// Data shared between the RxStream and callback context
-struct RxSharedData(Mutex<TransferBuffers>, Condvar);
-
 /// A stack allocated vector with a maximum size
-struct StackVec {
+pub struct StackVec {
     data: [u8; BUFFER_SIZE],
     len: usize,
 }
@@ -393,17 +405,16 @@ unsafe extern "C" fn rx_callback(transfer: *mut ffi::hackrf_transfer) -> c_int {
     let mut data = StackVec::new();
     data.copy_slice(src_buffer);
 
-    let sender_cell: &UnsafeCell<SyncSender<StackVec>> = mem::transmute((*transfer).rx_ctx);
-    let sender = &mut *sender_cell.get();
+    let sender_raw: *mut SyncSender<StackVec> = mem::transmute((*transfer).rx_ctx);
+    let sender = &mut *sender_raw;
 
-    if let Err(e) = receiver.try_send(data) {
+    if let Err(e) = sender.try_send(data) {
         match e {
-            // If the buffer is full just drop the message, it might be useful to consider logging
-            // in the future.
-            Full(_) => {},
+            // If the buffer is full drop the message and increment the overflow count
+            TrySendError::Full(_) => { OVERFLOW_COUNT.fetch_add(1, Ordering::Relaxed); },
 
             // Report an error back to libhackrf
-            Disconnected(_) => return -1,
+            TrySendError::Disconnected(_) => return -1,
         }
     }
 
