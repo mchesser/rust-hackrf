@@ -85,7 +85,6 @@ pub struct hackrf_device_list_t {
 
 pub type hackrf_sample_block_cb_fn = unsafe extern "C" fn(transfer: *mut hackrf_transfer) -> c_int;
 
-#[link(name="hackrf")]
 extern "C" {
     pub fn hackrf_init() -> hackrf_error;
     pub fn hackrf_exit() -> hackrf_error;

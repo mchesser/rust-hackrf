@@ -421,3 +421,11 @@ unsafe extern "C" fn rx_callback(transfer: *mut ffi::hackrf_transfer) -> c_int {
     // Succesfully sent the data
     0
 }
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn init_test() {
+        super::init();
+    }
+}
