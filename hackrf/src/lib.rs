@@ -46,6 +46,8 @@ use std::rc::Rc;
 
 use ffi::hackrf_error::*;
 
+pub mod util;
+
 /// The maximum size of each of the buffers used for receiving.
 /// Note: this must be greater than or equal to the buffer size chosen for libusb.
 const BUFFER_SIZE: usize = 262144;
