@@ -41,7 +41,7 @@ use std::os::raw::{c_int, c_void};
 use std::sync::mpsc::{SyncSender, Receiver, TrySendError, sync_channel};
 use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 
-use std::{mem, slice, ops};
+use std::{mem, slice, ops, fmt};
 use std::rc::Rc;
 
 use ffi::hackrf_error::*;
@@ -85,6 +85,12 @@ pub struct HackRFError {
 
     /// The code returned by `libhackrf`.
     pub code: i32,
+}
+
+impl fmt::Display for HackRFError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Error({}): {}", self.code, self.desc)
+    }
 }
 
 /// A specialized Result type for HackRF operations
