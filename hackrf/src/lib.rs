@@ -41,7 +41,7 @@ use std::os::raw::{c_int, c_void};
 use std::sync::mpsc::{SyncSender, Receiver, TrySendError, sync_channel};
 use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 
-use std::{mem, slice, ops, fmt};
+use std::{mem, slice, fmt, error};
 use std::rc::Rc;
 
 use ffi::hackrf_error::*;
@@ -90,6 +90,12 @@ pub struct HackRFError {
 impl fmt::Display for HackRFError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Error({}): {}", self.code, self.desc)
+    }
+}
+
+impl error::Error for HackRFError {
+    fn description(&self) -> &str {
+        &self.desc
     }
 }
 
@@ -280,7 +286,7 @@ impl HackRF {
     /// Start an RX stream.
     pub fn rx_stream(&mut self, bound: usize) -> HackRFResult<RxStream> {
         let mut rx_stream = RxStream::new(bound, self);
-        let sender = (&mut *rx_stream.sender) as *mut SyncSender<StackVec>;
+        let sender = (&mut *rx_stream.sender) as *mut SyncSender<Vec<u8>>;
         unsafe {
             match ffi::hackrf_start_rx(self.inner, rx_callback, sender as *mut c_void) {
                 HACKRF_SUCCESS => Ok(rx_stream),
@@ -297,9 +303,9 @@ pub struct RxStream<'a> {
     hackrf_device: &'a HackRF,
     lookup_table: [f32; 256],
     local_index: usize,
-    local_buffer: StackVec,
-    sender: Box<SyncSender<StackVec>>,
-    receiver: Receiver<StackVec>,
+    local_buffer: Vec<u8>,
+    sender: Box<SyncSender<Vec<u8>>>,
+    receiver: Receiver<Vec<u8>>,
 }
 
 impl<'a> RxStream<'a> {
@@ -321,14 +327,14 @@ impl<'a> RxStream<'a> {
             hackrf_device: hackrf_device,
             lookup_table: gen_lookup_table(),
             local_index: 0,
-            local_buffer: StackVec::new(),
+            local_buffer: vec![],
             sender: Box::new(sender),
             receiver: receiver,
         }
     }
 
     // Returns a reference to the internal receiver
-    pub fn receiver(&mut self) -> &mut Receiver<StackVec> {
+    pub fn receiver(&mut self) -> &mut Receiver<Vec<u8>> {
         &mut self.receiver
     }
 
@@ -370,36 +376,6 @@ impl<'a> Drop for RxStream<'a> {
     }
 }
 
-/// A stack allocated vector with a maximum size
-pub struct StackVec {
-    data: [u8; BUFFER_SIZE],
-    len: usize,
-}
-
-impl StackVec {
-    fn new() -> StackVec {
-        StackVec {
-            data: [0; BUFFER_SIZE],
-            len: 0
-        }
-    }
-
-    /// Copy a slice into the vector, setting the vectors length to the length of the slice.
-    /// Panics if the slice is too large.
-    fn copy_slice(&mut self, slice: &[u8]) {
-        self.data[0..slice.len()].copy_from_slice(slice);
-        self.len = slice.len();
-    }
-}
-
-impl ops::Deref for StackVec {
-    type Target = [u8];
-
-    fn deref(&self) -> &[u8] {
-        &self.data[0..self.len]
-    }
-}
-
 /// The call back that is used in the stream abstraction
 unsafe extern "C" fn rx_callback(transfer: *mut ffi::hackrf_transfer) -> c_int {
     let src_buffer = slice::from_raw_parts((*transfer).buffer, (*transfer).valid_length as usize);
@@ -410,10 +386,9 @@ unsafe extern "C" fn rx_callback(transfer: *mut ffi::hackrf_transfer) -> c_int {
     }
 
     // Copy the transferred data into an owned structure
-    let mut data = StackVec::new();
-    data.copy_slice(src_buffer);
+    let data = src_buffer.into();
 
-    let sender_raw: *mut SyncSender<StackVec> = mem::transmute((*transfer).rx_ctx);
+    let sender_raw: *mut SyncSender<Vec<u8>> = mem::transmute((*transfer).rx_ctx);
     let sender = &mut *sender_raw;
 
     if let Err(e) = sender.try_send(data) {
