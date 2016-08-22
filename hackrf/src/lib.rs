@@ -202,9 +202,14 @@ impl Drop for HackRF {
     }
 }
 
+static OVERFLOW_COUNT: AtomicUsize = ATOMIC_USIZE_INIT;
+
 impl HackRF {
     /// Attempt to open a connected HackRF device.
     pub fn open(context: &HackRFContext) -> HackRFResult<HackRF> {
+        // Reset the overflow counter
+        OVERFLOW_COUNT.store(0, Ordering::Relaxed);
+
         unsafe {
             let mut device = std::mem::zeroed();
             hackrf_try!(ffi::hackrf_open(&mut device));
@@ -294,9 +299,12 @@ impl HackRF {
             }
         }
     }
-}
 
-static OVERFLOW_COUNT: AtomicUsize = ATOMIC_USIZE_INIT;
+    /// Return how many times the HackRF has dropped data frames
+    pub fn overflow_count(&self) -> usize {
+        OVERFLOW_COUNT.load(Ordering::Relaxed)
+    }
+}
 
 /// A structure that manages receiving I/Q samples from the HackRF.
 pub struct RxStream<'a> {
@@ -318,9 +326,6 @@ impl<'a> RxStream<'a> {
             }
             data
         }
-
-        // Reset the overflow counter
-        OVERFLOW_COUNT.store(0, Ordering::Relaxed);
 
         let (sender, receiver) = sync_channel(bound);
         RxStream {
@@ -359,11 +364,6 @@ impl<'a> RxStream<'a> {
         let i = self.local_index;
         self.local_index += 2;
         Some((self.local_buffer[i], self.local_buffer[i + 1]))
-    }
-
-    /// Return how many times the stream dropped data frames
-    pub fn overflow_count(&self) -> usize {
-        OVERFLOW_COUNT.load(Ordering::Relaxed)
     }
 }
 
