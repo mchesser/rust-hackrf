@@ -323,6 +323,7 @@ pub struct RxStream<'a> {
     local_buffer: Vec<u8>,
     sender: Box<SyncSender<Vec<u8>>>,
     receiver: Receiver<Vec<u8>>,
+    stopped: bool,
 }
 
 impl<'a> RxStream<'a> {
@@ -344,6 +345,7 @@ impl<'a> RxStream<'a> {
             local_buffer: vec![],
             sender: Box::new(sender),
             receiver: receiver,
+            stopped: false,
         }
     }
 
@@ -374,13 +376,23 @@ impl<'a> RxStream<'a> {
         self.local_index += 2;
         Some((self.local_buffer[i], self.local_buffer[i + 1]))
     }
+
+    /// Stop the Rx Stream
+    pub fn stop(mut self) -> HackRFResult<()> {
+        unsafe {
+            hackrf_try!(ffi::hackrf_stop_rx(self.hackrf_device.inner));
+        }
+        self.stopped = true;
+        Ok(())
+    }
 }
 
 impl<'a> Drop for RxStream<'a> {
     fn drop(&mut self) {
-        unsafe {
-            // TODO: investigate if this can ever fail under reasonable conditions
-            ffi::hackrf_stop_rx(self.hackrf_device.inner);
+        if !self.stopped {
+            unsafe {
+                ffi::hackrf_stop_rx(self.hackrf_device.inner);
+            }
         }
     }
 }
