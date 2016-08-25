@@ -276,7 +276,6 @@ impl HackRF {
         Ok(())
     }
 
-
     /// Sets the baseband filter bandwidth.
     ///
     /// Note: This must be performed *after* setting the sample rate.
@@ -289,12 +288,22 @@ impl HackRF {
     }
 
     /// Start an RX stream.
-    pub fn rx_stream(&mut self, bound: usize) -> HackRFResult<RxStream> {
+    pub fn rx_stream(&self, bound: usize) -> HackRFResult<RxStream> {
         let mut rx_stream = RxStream::new(bound, self);
         let sender = (&mut *rx_stream.sender) as *mut SyncSender<Vec<u8>>;
         unsafe {
             match ffi::hackrf_start_rx(self.inner, rx_callback, sender as *mut c_void) {
                 HACKRF_SUCCESS => Ok(rx_stream),
+                error => Err(parse_error(error)),
+            }
+        }
+    }
+
+    /// Checks if the hackrf is currently streaming
+    pub fn is_streaming(&self) -> HackRFResult<()> {
+        unsafe {
+            match ffi::hackrf_is_streaming(self.inner) {
+                HACKRF_TRUE => Ok(()),
                 error => Err(parse_error(error)),
             }
         }
