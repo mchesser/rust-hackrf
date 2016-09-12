@@ -356,6 +356,7 @@ impl<'a> RxStream<'a> {
 
     /// Return the next I/Q sample converted to floating point numbers. If there is no data
     /// avaliable, then this function is blocking.
+    #[inline]
     pub fn next_sample(&mut self) -> Option<(f32, f32)> {
         let sample = self.next_sample_raw();
         sample.map(|(i, q)| (self.lookup_table[i as usize], self.lookup_table[q as usize]))
@@ -363,6 +364,7 @@ impl<'a> RxStream<'a> {
 
     /// Return the next raw I/Q sample from the HackRF. If there is no data avaliable, then this
     /// function is blocking.
+    #[inline]
     pub fn next_sample_raw(&mut self) -> Option<(u8, u8)> {
         if self.local_buffer.len() < self.local_index + 1 {
             self.local_buffer = match self.receiver.recv() {

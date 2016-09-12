@@ -41,6 +41,7 @@ const LOOKUP_TABLE: [f32; 256] = [
     -0.015625, -0.0078125
 ];
 
+#[inline]
 pub fn convert_iq(i: u8, q: u8) -> (f32, f32) {
     (LOOKUP_TABLE[i as usize], LOOKUP_TABLE[q as usize])
 }
